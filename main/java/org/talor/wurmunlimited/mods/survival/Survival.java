@@ -32,6 +32,8 @@ import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import static com.wurmonline.server.bodys.Wound.TYPE_COLD;
+
 
 public class Survival implements WurmServerMod, Configurable, ServerStartedListener, Initable, PreInitable, PlayerMessageListener  {
 
@@ -313,7 +315,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
             }
         });
 
-        HookManager.getInstance().registerHook("com.wurmonline.server.behaviours.MethodsItems", "fillContainer", "(Lcom/wurmonline/server/items/Item;Lcom/wurmonline/server/creatures/Creature;)V", new InvocationHandlerFactory() {
+        HookManager.getInstance().registerHook("com.wurmonline.server.behaviours.MethodsItems", "fillContainer", "(Lcom/wurmonline/server/items/Item;Lcom/wurmonline/server/creatures/Creature;Z)V", new InvocationHandlerFactory() {
 
             @Override
             public InvocationHandler createInvocationHandler () {
@@ -325,7 +327,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                         Boolean result = (Boolean) method.invoke(proxy, args);
 
                         if(enableWaterDisease) {
-                            // Water from the ocean is low quality
+                            // Water from the ocean is low quality, ignore brackishness as WU deals with that in a different way.
                             Item contained;
                             Item targetItem = (Item) args[0];
 
@@ -560,10 +562,10 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
 
             Body body = player.getBody();
 
-            for (byte y : bodyParts) {
+            for (byte bodyPartPos : bodyParts) {
 
                 try {
-                    Item bodyPart = body.getBodyPart(y);
+                    Item bodyPart = body.getBodyPart(bodyPartPos);
                     short temperature = bodyPart.getTemperature();
                     Item armour = null;
                     double armourGeneralBonus = 0;
@@ -573,7 +575,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                     double armourEffects = 0;
 
                     try{
-                        armour = player.getArmour(y);
+                        armour = player.getArmour(bodyPartPos);
                     } catch (NoArmourException nae) {
                         if (verboseLogging) logger.log(Level.INFO, nae.getMessage());
                     }
@@ -659,7 +661,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                             int dmg = Server.rand.nextInt(maxWoundSize);
                             // Only apply wounds every other poll
                             if (player.secondsPlayed % 30.0F == 0.0F) {
-                                player.addWoundOfType(null, (byte) 8, y, false, 1.0F, false, dmg);
+                                player.addWoundOfType(null, TYPE_COLD, bodyPartPos, false, 1.0F, false, dmg, 0.0F, 0.0F, false, false );
                             }
                             if (warningMessages) {
                                 message = "You are freezing cold! Find warmth quickly!";
