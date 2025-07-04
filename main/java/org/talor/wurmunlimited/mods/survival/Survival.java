@@ -1,6 +1,5 @@
 package org.talor.wurmunlimited.mods.survival;
 
-import com.wurmonline.javaone.MeshIO;
 import com.wurmonline.math.TilePos;
 import com.wurmonline.mesh.Tiles;
 import com.wurmonline.server.*;
@@ -8,7 +7,6 @@ import com.wurmonline.server.behaviours.*;
 import com.wurmonline.server.bodys.BodyTemplate;
 import com.wurmonline.server.creatures.Communicator;
 import com.wurmonline.server.creatures.Creature;
-import com.wurmonline.server.creatures.Creatures;
 import com.wurmonline.server.creatures.NoArmourException;
 import com.wurmonline.server.items.Item;
 import com.wurmonline.server.items.NoSpaceException;
@@ -19,13 +17,11 @@ import com.wurmonline.server.zones.Zones;
 import com.wurmonline.server.bodys.Body;
 import com.wurmonline.server.players.Player;
 
-import com.wurmonline.shared.constants.StructureConstants;
 import org.gotti.wurmunlimited.modloader.classhooks.HookManager;
 import org.gotti.wurmunlimited.modloader.classhooks.InvocationHandlerFactory;
 import org.gotti.wurmunlimited.modloader.interfaces.*;
 
 import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Iterator;
 import java.util.Properties;
@@ -77,7 +73,6 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
     public boolean onPlayerMessage(Communicator communicator, String msg) {
         if (msg.startsWith("/mytemp")) {
 
-            String commandMessage = communicator.getCommandMessage();
             Player player = communicator.player;
             if (enableTemperatureSurvival) {
                 TempEffects tempEffects = getTemperatureEffects(player);
