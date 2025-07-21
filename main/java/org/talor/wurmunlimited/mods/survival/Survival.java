@@ -7,9 +7,11 @@ import com.wurmonline.server.behaviours.*;
 import com.wurmonline.server.bodys.BodyTemplate;
 import com.wurmonline.server.creatures.Communicator;
 import com.wurmonline.server.creatures.Creature;
+import com.wurmonline.server.creatures.CreatureStatus;
 import com.wurmonline.server.creatures.NoArmourException;
 import com.wurmonline.server.items.Item;
 import com.wurmonline.server.items.NoSpaceException;
+import com.wurmonline.server.players.ItemBonus;
 import com.wurmonline.server.structures.Floor;
 import com.wurmonline.server.zones.NoSuchZoneException;
 import com.wurmonline.server.zones.VolaTile;
@@ -17,10 +19,12 @@ import com.wurmonline.server.zones.Zones;
 import com.wurmonline.server.bodys.Body;
 import com.wurmonline.server.players.Player;
 
+import com.wurmonline.shared.constants.BodyPartConstants;
 import org.gotti.wurmunlimited.modloader.classhooks.HookManager;
 import org.gotti.wurmunlimited.modloader.classhooks.InvocationHandlerFactory;
 import org.gotti.wurmunlimited.modloader.interfaces.*;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.util.Iterator;
@@ -29,6 +33,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import static com.wurmonline.server.bodys.Wound.TYPE_COLD;
+import static com.wurmonline.server.bodys.Wound.TYPE_INTERNAL;
 
 
 public class Survival implements WurmServerMod, Configurable, ServerStartedListener, Initable, PreInitable, PlayerMessageListener  {
@@ -44,6 +49,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
     private boolean hardMode = false;
     private boolean enableCropSeasons = true;
     private boolean northSouthMode = true;
+    private boolean enableHungerDeath = true;
     private float difficultySetting = 0;
     private int maxWoundSize = 2000;
 
@@ -66,7 +72,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
         maxWoundSize = Integer.parseInt(properties.getProperty("maxWoundSize", Integer.toString(maxWoundSize)));
         enableCropSeasons = Boolean.parseBoolean(properties.getProperty("enableCropSeasons", Boolean.toString(enableCropSeasons)));
         northSouthMode = Boolean.parseBoolean(properties.getProperty("northSouthMode", Boolean.toString(northSouthMode)));
-
+        enableHungerDeath = Boolean.parseBoolean(properties.getProperty("enableHungerDeath", Boolean.toString(enableHungerDeath)));
 	}
 
     @Override
@@ -443,6 +449,289 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                 };
             }
         });
+
+        HookManager.getInstance().registerHook("com.wurmonline.server.creatures.CreatureStatus", "pollFat", "()Z", new InvocationHandlerFactory() {
+        // Method is called pollFat, but also polls disease seemingly.
+            @Override
+            public InvocationHandler createInvocationHandler() {
+                return new InvocationHandler() {
+
+                    @Override
+                    public Object invoke(Object object, Method method, Object[] args) throws Throwable {
+
+                        CreatureStatus creatureStatus = (CreatureStatus) object;
+                        Class<?> creatureStatusClass = CreatureStatus.class;
+
+                        // Fields we need to use
+                        Field statusHolder = creatureStatusClass.getDeclaredField("statusHolder");
+                        statusHolder.setAccessible(true);
+                        Field fatCounter = creatureStatusClass.getDeclaredField("fatCounter");
+                        fatCounter.setAccessible(true);
+                        Field diseaseCounter = creatureStatusClass.getDeclaredField("diseaseCounter");
+                        diseaseCounter.setAccessible(true);
+                        Field hunger = creatureStatusClass.getDeclaredField("hunger");
+                        hunger.setAccessible(true);
+                        Field fat = creatureStatusClass.getDeclaredField("fat");
+                        fat.setAccessible(true);
+                        Field nutrition = creatureStatusClass.getDeclaredField("nutrition");
+                        nutrition.setAccessible(true);
+
+                        // Methods we need to use
+                        Method increaseFat = creatureStatusClass.getDeclaredMethod("increaseFat");
+                        increaseFat.setAccessible(true);
+                        Method decreaseFat = creatureStatusClass.getDeclaredMethod("decreaseFat");
+                        decreaseFat.setAccessible(true);
+                        Method checkDisease = creatureStatusClass.getDeclaredMethod("checkDisease");
+                        checkDisease.setAccessible(true);
+
+                        Creature creature = (Creature) statusHolder.get(creatureStatus);
+
+
+                        if (enableHungerDeath && !(creature.hasSpellEffect((byte) 75) && newPlayerProtection) && !(creature.getPower() >= 2 && gmProtection) && !creature.isDead()) {
+;
+                            if (Server.rand.nextBoolean()) fatCounter.set(creatureStatus, (Integer) fatCounter.get(creatureStatus) + 1);
+
+                                if ((Integer) fatCounter.get(creatureStatus) > 50) { // Gives all creatures high hunger, not just players
+                                    diseaseCounter.set(
+                                            creatureStatus,
+                                            Byte.valueOf((byte) (((Byte) diseaseCounter.get(creatureStatus)).byteValue() + 1))
+                                    );
+
+                                    fatCounter.set(creatureStatus, 0);
+
+                                    if (creatureStatus.getHunger() < 10000 && creatureStatus.getNutritionlevel() > 0.4F ) { // Gives all creatures and players same nutrition requirement
+                                        increaseFat.invoke(creatureStatus);
+                                        checkDisease.invoke(creatureStatus);
+                                    } else if (creatureStatus.getHunger() >= 60000) {
+                                        decreaseFat.invoke(creatureStatus);
+                                        if (!creature.isPlayer()) {
+                                             if ((creature.isHerbivore() || creature.isOmnivore()) && !creature.isUnique()) {
+                                                if (creatureStatus.fat < 1 && !creature.isInvulnerable()) return true;
+                                                hunger.set(creatureStatus, 10000);
+                                             } else if (Server.rand.nextInt(10) == 0) {
+                                                 hunger.set(creatureStatus, 10000);
+                                             }
+                                        } else if (fat.getByte(creatureStatus) > 0) {
+                                            creature.getCommunicator().sendNormalServerMessage("You are starving to death.");
+                                            int dmg = Server.rand.nextInt(maxWoundSize);
+                                            creature.addWoundOfType(null, TYPE_INTERNAL, BodyPartConstants.TORSO, false, 1.0F, false, dmg, 0.0F, 0.0F, false, false );
+                                            nutrition.set(creatureStatus, Math.max(0.1F, (Float) nutrition.get(creatureStatus) - 0.2F));
+                                            hunger.set(creatureStatus, 1000);
+                                        }
+                                    } else {
+                                        checkDisease.invoke(creatureStatus);
+                                    }
+                                if ((Byte) diseaseCounter.get(creatureStatus) == 8 && creatureStatus.disease > 50) {
+                                    boolean canSpread = (creature.getHitched() == null || !creature.isMoving());
+                                    if (canSpread) creature.getCurrentTile().checkDiseaseSpread();
+                                    if (creatureStatus.disease > 100 && Server.rand.nextBoolean() && !creature.isInvulnerable()) return true;
+                                }
+                                if (diseaseCounter.getByte(creatureStatus) == (byte)8) {
+                                     diseaseCounter.setByte(creatureStatus, (byte)0);
+                                }
+                            }
+                            return false;
+                        }
+
+                        return method.invoke(object, args);
+                    }
+                };
+            }
+        });
+
+        HookManager.getInstance().registerHook(
+                "com.wurmonline.server.creatures.Creature",
+                "pollStamina",
+                "()V",
+                new InvocationHandlerFactory() {
+                    @Override
+                    public InvocationHandler createInvocationHandler() {
+                        return new InvocationHandler() {
+                            // cache the one private Field we still need
+                            private final Field spiritField;
+                            {
+                                try {
+                                    spiritField = Creature.class
+                                            .getDeclaredField("hasSpiritStamina");
+                                    spiritField.setAccessible(true);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+
+                            @Override
+                            public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+
+                                Method decreaseCCFPValues = CreatureStatus.class
+                                        .getDeclaredMethod("decreaseCCFPValues");
+                                decreaseCCFPValues.setAccessible(true);
+                                Method getModifierValuesFor = CreatureStatus.class
+                                        .getDeclaredMethod("getModifierValuesFor", int.class);
+                                getModifierValuesFor.setAccessible(true);
+
+                                Method healTick = Creature.class
+                                        .getDeclaredMethod("healTick");
+                                healTick.setAccessible(true);
+
+                                Creature creature = (Creature) proxy;
+
+                                // 1) decrement the counter, floor at 0 (no reflection needed – it's public)
+                                creature.staminaPollCounter = Math.max(0, creature.staminaPollCounter - 1);
+
+                                // 2) only run when it hits zero
+                                if (creature.staminaPollCounter == 0) {
+                                    if (!creature.isUndead() && creature.isPlayer()) {
+                                        // === PLAYER PATH ===
+                                        int hungMod = 40;
+                                        int thirstMod = (int)(5f * ItemBonus.getReplenishBonus(creature));
+                                        /* Think 74 is thornshell? maybe this is supposed to be newb protection?if (creature.getSpellEffects() != null
+                                                && creature.getSpellEffects().getSpellEffect((byte)74) != null)
+                                        {
+                                            hungMod = 2;
+                                            thirstMod = 2;
+                                        }*/
+                                        hungMod = (int)(hungMod * ItemBonus.getReplenishBonus(creature));
+
+                                        // Mycelium‐worshippers on mycelium tiles skip hunger
+                                        boolean reduceHunger = true;
+                                        if (creature.getDeity() != null
+                                                && creature.getDeity().number == 4
+                                                && creature.isOnSurface())
+                                        {
+                                            int tile = Server.surfaceMesh
+                                                    .getTile(creature.getTileX(), creature.getTileY());
+                                            if (Tiles.getTile(Tiles.decodeType(tile)).isMycelium()) {
+                                                reduceHunger = false;
+                                            }
+                                        }
+
+                                        CreatureStatus status = creature.getStatus();
+                                        int hunger;
+                                        if (reduceHunger) {
+
+                                            decreaseCCFPValues.invoke(status);
+                                            hunger = status.modifyHunger(
+                                                    (int)(hungMod * (2f - status.getNutritionlevel())),
+                                                    1.0f
+                                            );
+                                        } else {
+                                            hunger = status.modifyHunger(-4, 0.99f);
+                                        }
+                                        int thirst = status.modifyThirst(thirstMod);
+
+                                        // compute starvation/thirst penalties
+                                        float hungPct = 1f;
+                                        if (hunger > 45000) {
+                                            hungPct = Math.max(1f, (65535 - hunger)) / 20535f;
+                                            hungPct *= hungPct;
+                                        }
+                                        float thirstPct = Math.max(65535 - thirst, 1) / 65535f;
+                                        thirstPct = thirstPct * thirstPct * thirstPct;
+
+                                        // only regen when allowed
+                                        if (status.hasNormalRegen() && !creature.isFighting()) {
+                                            float toModify = creature.isStealth() ? 0.06f : 0.6f;
+                                            toModify *= hungPct * thirstPct;
+
+                                            double stamMod = (Double)getModifierValuesFor.invoke(status, 1);
+
+                                            if (creature.getDeity() != null
+                                                    && creature.getDeity().isStaminaBonus()
+                                                    && creature.getFaith() >= 20f
+                                                    && creature.getFavor() >= 10f)
+                                            {
+                                                stamMod += 0.25;
+                                            }
+
+                                            // reflectively read the private field
+                                            boolean hasSpirit = spiritField.getBoolean(creature);
+                                            if (hasSpirit) {
+                                                stamMod *= 1.1;
+                                            }
+
+                                            if (creature.hasSleepBonus()) {
+                                                toModify = Math.max(0.006f,
+                                                        toModify * (float)(1 + stamMod) * 3f);
+                                            } else {
+                                                toModify = Math.max(0.004f,
+                                                        toModify * (float)(1 + stamMod));
+                                            }
+
+                                            if (creature.hasSpellEffect((byte)95)) {
+                                                toModify *= 0.5f;
+                                            }
+
+                                            // underwater or last‐gasp cancels regen
+                                            if (!((creature.getPower() == 0
+                                                    && creature.getVehicle() == -10L
+                                                    && (creature.getPositionZ() + creature.getAltOffZ()) < -1.45)
+                                                    || creature.isUsingLastGasp()))
+                                            {
+                                                status.modifyStamina2(toModify);
+                                            }
+                                        }
+
+                                        status.setNormalRegen(true);
+
+                                    } else {
+                                        // === NPC / UNDEAD PATH ===
+                                        CreatureStatus status = creature.getStatus();
+                                        if (creature.isNeedFood()) {
+                                            if (Server.rand.nextInt(600) == 0) {
+                                                if (creature.hasTrait(14) || creature.isPregnant()) {
+                                                    status.modifyHunger(1500, 1f);
+                                                } else if (!creature.isCarnivore()) {
+                                                    status.modifyHunger(700, 1f);
+                                                } else {
+                                                    status.modifyHunger(150, 1f);
+                                                }
+                                            }
+                                        } else {
+                                            status.modifyHunger(-1, 0.5f);
+                                        }
+
+                                        if (creature.isRegenerating() || creature.isUnique()) {
+                                            if (Server.rand.nextInt(10) == 0) {
+                                                healTick.invoke(creature);
+                                            }
+                                        }
+
+                                        if (Server.rand.nextInt(100) == 0) {
+                                            if (!creature.isFighting() || creature.isUnique()) {
+                                                status.resetCreatureStamina();
+                                            }
+                                            // random cave‐wound if submerged and alone
+                                            if (!creature.isSwimming()
+                                                    && !creature.isUnique()
+                                                    && !creature.isSubmerged()
+                                                    && (creature.getPositionZ() + creature.getAltOffZ()) <= -1.25
+                                                    && creature.getVehicle() == -10L
+                                                    && creature.getHitched() == null
+                                                    && !creature.isRidden()
+                                                    && creature.getLeader() == null
+                                                    && !Tiles.isSolidCave(Tiles.decodeType(
+                                                    creature.getCurrentTileNum())))
+                                            {
+                                                creature.addWoundOfType(
+                                                        null, (byte)7, 2, false, 1.0f, false,
+                                                        4000f + Server.rand.nextFloat() * 3000f,
+                                                        0f, 0f, false, false
+                                                );
+                                            }
+                                        }
+                                        status.setNormalRegen(true);
+                                    }
+                                }
+
+                                // void return
+                                return null;
+                            }
+                        };
+                    }
+                }
+        );
+
+
 
     }
 
