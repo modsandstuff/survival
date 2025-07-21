@@ -486,41 +486,39 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
 
                         Creature creature = (Creature) statusHolder.get(creatureStatus);
 
-
                         if (enableHungerDeath && !(creature.hasSpellEffect((byte) 75) && newPlayerProtection) && !(creature.getPower() >= 2 && gmProtection) && !creature.isDead()) {
 ;
                             if (Server.rand.nextBoolean()) fatCounter.set(creatureStatus, (Integer) fatCounter.get(creatureStatus) + 1);
 
-                                if ((Integer) fatCounter.get(creatureStatus) > 50) { // Gives all creatures high hunger, not just players
-                                    diseaseCounter.set(
-                                            creatureStatus,
-                                            Byte.valueOf((byte) (((Byte) diseaseCounter.get(creatureStatus)).byteValue() + 1))
-                                    );
+                            if ((Integer) fatCounter.get(creatureStatus) > 50) { // Gives all creatures high hunger, not just players
+                                diseaseCounter.set(
+                                    creatureStatus,
+                                    Byte.valueOf((byte) (((Byte) diseaseCounter.get(creatureStatus)).byteValue() + 1))
+                                );
 
-                                    fatCounter.set(creatureStatus, 0);
+                                fatCounter.set(creatureStatus, 0);
 
-                                    if (creatureStatus.getHunger() < 10000 && creatureStatus.getNutritionlevel() > 0.4F ) { // Gives all creatures and players same nutrition requirement
-                                        increaseFat.invoke(creatureStatus);
-                                        checkDisease.invoke(creatureStatus);
-                                    } else if (creatureStatus.getHunger() >= 60000) {
-                                        decreaseFat.invoke(creatureStatus);
-                                        if (!creature.isPlayer()) {
-                                             if ((creature.isHerbivore() || creature.isOmnivore()) && !creature.isUnique()) {
-                                                if (creatureStatus.fat < 1 && !creature.isInvulnerable()) return true;
-                                                hunger.set(creatureStatus, 10000);
-                                             } else if (Server.rand.nextInt(10) == 0) {
-                                                 hunger.set(creatureStatus, 10000);
-                                             }
-                                        } else if (fat.getByte(creatureStatus) > 0) {
-                                            creature.getCommunicator().sendNormalServerMessage("You are starving to death.");
-                                            int dmg = Server.rand.nextInt(maxWoundSize);
-                                            creature.addWoundOfType(null, TYPE_INTERNAL, BodyPartConstants.TORSO, false, 1.0F, false, dmg, 0.0F, 0.0F, false, false );
-                                            nutrition.set(creatureStatus, Math.max(0.1F, (Float) nutrition.get(creatureStatus) - 0.2F));
-                                            hunger.set(creatureStatus, 1000);
-                                        }
-                                    } else {
-                                        checkDisease.invoke(creatureStatus);
+                                if (creatureStatus.getHunger() < 10000 && creatureStatus.getNutritionlevel() > 0.4F ) { // Gives all creatures and players same nutrition requirement
+                                    increaseFat.invoke(creatureStatus);
+                                    checkDisease.invoke(creatureStatus);
+                                } else if (creatureStatus.getHunger() >= 60000) {
+                                    decreaseFat.invoke(creatureStatus);
+                                    if (!creature.isPlayer()) {
+                                         if ((creature.isHerbivore() || creature.isOmnivore()) && !creature.isUnique()) {
+                                            if (creatureStatus.fat < 1 && !creature.isInvulnerable()) return true;
+                                            hunger.set(creatureStatus, 10000);
+                                         } else if (Server.rand.nextInt(10) == 0) {
+                                             hunger.set(creatureStatus, 10000);
+                                         }
+                                    } else if (fat.getByte(creatureStatus) > 0) {
+                                        creature.getCommunicator().sendNormalServerMessage("You are starving to death.");
+                                        int dmg = Server.rand.nextInt(maxWoundSize) * 10;
+                                        creature.addWoundOfType(null, TYPE_INTERNAL, BodyPartConstants.TORSO, false, 1.0F, false, dmg, 0.0F, 0.0F, false, false );
+                                        nutrition.set(creatureStatus, Math.max(0.01F, (Float) nutrition.get(creatureStatus) - 0.2F));
                                     }
+                                } else {
+                                    checkDisease.invoke(creatureStatus);
+                                }
                                 if ((Byte) diseaseCounter.get(creatureStatus) == 8 && creatureStatus.disease > 50) {
                                     boolean canSpread = (creature.getHitched() == null || !creature.isMoving());
                                     if (canSpread) creature.getCurrentTile().checkDiseaseSpread();
@@ -539,11 +537,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
             }
         });
 
-        HookManager.getInstance().registerHook(
-                "com.wurmonline.server.creatures.Creature",
-                "pollStamina",
-                "()V",
-                new InvocationHandlerFactory() {
+        HookManager.getInstance().registerHook("com.wurmonline.server.creatures.Creature","pollStamina","()V", new InvocationHandlerFactory() {
                     @Override
                     public InvocationHandler createInvocationHandler() {
                         return new InvocationHandler() {
@@ -551,7 +545,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                             private final Field spiritField;
                             {
                                 try {
-                                    spiritField = Creature.class
+                                    Field spiritField = Creature.class
                                             .getDeclaredField("hasSpiritStamina");
                                     spiritField.setAccessible(true);
                                 } catch (Exception e) {
@@ -560,20 +554,20 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                             }
 
                             @Override
-                            public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                            public Object invoke(Object object, Method method, Object[] args) throws Throwable {
 
-                                Method decreaseCCFPValues = CreatureStatus.class
-                                        .getDeclaredMethod("decreaseCCFPValues");
+                                CreatureStatus creatureStatus = (CreatureStatus) object; // Might not need this
+                                Class<?> creatureStatusClass = CreatureStatus.class;
+
+                                // Methods we need to use
+                                Method decreaseCCFPValues = creatureStatusClass.getDeclaredMethod("decreaseCCFPValues");
                                 decreaseCCFPValues.setAccessible(true);
-                                Method getModifierValuesFor = CreatureStatus.class
-                                        .getDeclaredMethod("getModifierValuesFor", int.class);
+                                Method getModifierValuesFor = creatureStatusClass.getDeclaredMethod("getModifierValuesFor", int.class);
                                 getModifierValuesFor.setAccessible(true);
-
-                                Method healTick = Creature.class
-                                        .getDeclaredMethod("healTick");
+                                Method healTick = creatureStatusClass.getDeclaredMethod("healTick");
                                 healTick.setAccessible(true);
 
-                                Creature creature = (Creature) proxy;
+                                Creature creature = (Creature) object;
 
                                 // 1) decrement the counter, floor at 0 (no reflection needed – it's public)
                                 creature.staminaPollCounter = Math.max(0, creature.staminaPollCounter - 1);
@@ -584,7 +578,8 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                                         // === PLAYER PATH ===
                                         int hungMod = 40;
                                         int thirstMod = (int)(5f * ItemBonus.getReplenishBonus(creature));
-                                        /* Think 74 is thornshell? maybe this is supposed to be newb protection?if (creature.getSpellEffects() != null
+                                        /* Newb protection
+                                        if (creature.getSpellEffects() != null
                                                 && creature.getSpellEffects().getSpellEffect((byte)74) != null)
                                         {
                                             hungMod = 2;
