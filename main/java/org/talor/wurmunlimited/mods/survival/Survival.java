@@ -471,8 +471,6 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                         diseaseCounter.setAccessible(true);
                         Field hunger = creatureStatusClass.getDeclaredField("hunger");
                         hunger.setAccessible(true);
-                        Field fat = creatureStatusClass.getDeclaredField("fat");
-                        fat.setAccessible(true);
                         Field nutrition = creatureStatusClass.getDeclaredField("nutrition");
                         nutrition.setAccessible(true);
 
@@ -486,36 +484,30 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
 
                         Creature creature = (Creature) statusHolder.get(creatureStatus);
 
-                        if (enableHungerDeath && !(creature.hasSpellEffect((byte) 75) && newPlayerProtection) && !(creature.getPower() >= 2 && gmProtection) && !creature.isDead()) {
+                        if (enableHungerDeath && !(creature.hasSpellEffect((byte) 74) && newPlayerProtection) && !(creature.getPower() >= 2 && gmProtection) && !creature.isDead()) {
 ;
-                            if (Server.rand.nextBoolean()) fatCounter.set(creatureStatus, (Integer) fatCounter.get(creatureStatus) + 1);
+                            if (Server.rand.nextBoolean()) fatCounter.setInt(creatureStatus, fatCounter.getInt(creatureStatus) + 1);
 
                             if ((Integer) fatCounter.get(creatureStatus) > 50) { // Gives all creatures high hunger, not just players
-                                diseaseCounter.set(
-                                    creatureStatus,
-                                    Byte.valueOf((byte) (((Byte) diseaseCounter.get(creatureStatus)).byteValue() + 1))
+                                diseaseCounter.setByte(
+                                        creatureStatus,
+                                        (byte)(diseaseCounter.getByte(creatureStatus) + 1)
                                 );
 
-                                fatCounter.set(creatureStatus, 0);
+                                fatCounter.setInt(creatureStatus, 0);
 
                                 if (creatureStatus.getHunger() < 10000 && creatureStatus.getNutritionlevel() > 0.4F ) { // Gives all creatures and players same nutrition requirement
                                     increaseFat.invoke(creatureStatus);
                                     checkDisease.invoke(creatureStatus);
                                 } else if (creatureStatus.getHunger() >= 60000) {
                                     decreaseFat.invoke(creatureStatus);
-                                    if (!creature.isPlayer()) {
-                                         if ((creature.isHerbivore() || creature.isOmnivore()) && !creature.isUnique()) {
-                                            if (creatureStatus.fat < 1 && !creature.isInvulnerable()) return true;
-                                            hunger.set(creatureStatus, 10000);
-                                         } else if (Server.rand.nextInt(10) == 0) {
-                                             hunger.set(creatureStatus, 10000);
-                                         }
-                                    } else if (fat.getByte(creatureStatus) > 0) {
-                                        creature.getCommunicator().sendNormalServerMessage("You are starving to death.");
-                                        int dmg = Server.rand.nextInt(maxWoundSize) * 10;
-                                        creature.addWoundOfType(null, TYPE_INTERNAL, BodyPartConstants.TORSO, false, 1.0F, false, dmg, 0.0F, 0.0F, false, false );
-                                        nutrition.set(creatureStatus, Math.max(0.01F, (Float) nutrition.get(creatureStatus) - 0.2F));
-                                    }
+                                    // used to be a fat > 0 check here. Maybe put something like that back, allow fat to offer some protection against starvation
+                                    creature.getCommunicator().sendNormalServerMessage("You are starving to death.");
+                                    logger.log(Level.INFO, creature.getName() + " is starving to death at " + creature.getTileX() + ", " + creature.getTileY());
+                                    int dmg = Server.rand.nextInt(maxWoundSize) * 10;
+                                    creature.addWoundOfType(null, TYPE_INTERNAL, BodyPartConstants.TORSO, false, 1.0F, false, dmg, 0.0F, 0.0F, false, false );
+                                    nutrition.set(creatureStatus, Math.max(0.01F, (Float) nutrition.get(creatureStatus) - 0.2F));
+
                                 } else {
                                     checkDisease.invoke(creatureStatus);
                                 }
@@ -541,51 +533,41 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                     @Override
                     public InvocationHandler createInvocationHandler() {
                         return new InvocationHandler() {
-                            // cache the one private Field we still need
-                            private final Field spiritField;
-                            {
-                                try {
-                                    Field spiritField = Creature.class
-                                            .getDeclaredField("hasSpiritStamina");
-                                    spiritField.setAccessible(true);
-                                } catch (Exception e) {
-                                    throw new RuntimeException(e);
-                                }
-                            }
 
                             @Override
                             public Object invoke(Object object, Method method, Object[] args) throws Throwable {
 
-                                CreatureStatus creatureStatus = (CreatureStatus) object; // Might not need this
+                                Creature creature = (Creature) object;
+
                                 Class<?> creatureStatusClass = CreatureStatus.class;
+                                Class<?> creatureClass = Creature.class;
 
                                 // Methods we need to use
                                 Method decreaseCCFPValues = creatureStatusClass.getDeclaredMethod("decreaseCCFPValues");
                                 decreaseCCFPValues.setAccessible(true);
                                 Method getModifierValuesFor = creatureStatusClass.getDeclaredMethod("getModifierValuesFor", int.class);
                                 getModifierValuesFor.setAccessible(true);
-                                Method healTick = creatureStatusClass.getDeclaredMethod("healTick");
+                                Method healTick = creatureClass.getDeclaredMethod("healTick");
                                 healTick.setAccessible(true);
 
-                                Creature creature = (Creature) object;
+                                // Fields we need to use
+                                Field spiritField = creatureClass.getDeclaredField("hasSpiritStamina");
+                                spiritField.setAccessible(true);
 
-                                // 1) decrement the counter, floor at 0 (no reflection needed – it's public)
                                 creature.staminaPollCounter = Math.max(0, creature.staminaPollCounter - 1);
 
-                                // 2) only run when it hits zero
                                 if (creature.staminaPollCounter == 0) {
                                     if (!creature.isUndead() && creature.isPlayer()) {
-                                        // === PLAYER PATH ===
-                                        int hungMod = 40;
+
+                                        int hungMod = (int)(40f * ItemBonus.getReplenishBonus(creature)); // should be = 4 once testing finished
                                         int thirstMod = (int)(5f * ItemBonus.getReplenishBonus(creature));
-                                        /* Newb protection
+                                        /* Newb protection Uncomment this once testing finished
                                         if (creature.getSpellEffects() != null
                                                 && creature.getSpellEffects().getSpellEffect((byte)74) != null)
                                         {
                                             hungMod = 2;
                                             thirstMod = 2;
                                         }*/
-                                        hungMod = (int)(hungMod * ItemBonus.getReplenishBonus(creature));
 
                                         // Mycelium‐worshippers on mycelium tiles skip hunger
                                         boolean reduceHunger = true;
@@ -669,7 +651,7 @@ public class Survival implements WurmServerMod, Configurable, ServerStartedListe
                                         status.setNormalRegen(true);
 
                                     } else {
-                                        // === NPC / UNDEAD PATH ===
+
                                         CreatureStatus status = creature.getStatus();
                                         if (creature.isNeedFood()) {
                                             if (Server.rand.nextInt(600) == 0) {
